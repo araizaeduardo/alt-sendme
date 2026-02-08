@@ -1,4 +1,4 @@
-import { CheckCircle, Copy, Square } from 'lucide-react'
+import { CheckCircle, Copy, Mail, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '../../i18n/react-i18next-compat'
 import type {
@@ -8,7 +8,17 @@ import type {
 import { TransferProgressBar } from '../common/TransferProgressBar'
 import { StatusIndicator } from '../common/StatusIndicator'
 import { Button } from '../ui/button'
+import {
+	AlertDialog,
+	AlertDialogClose,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from '../ui/alert-dialog'
 import { InputGroup, InputGroupAddon, InputGroupInput } from '../ui/input-group'
+import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { Switch } from '../ui/switch'
 import { toastManager } from '../ui/toast'
@@ -233,6 +243,59 @@ export function TicketDisplay({
 	onToggleBroadcast?: () => void
 }) {
 	const { t } = useTranslation()
+	const [isEmailDialogOpen, setIsEmailDialogOpen] = useState(false)
+	const [emailTo, setEmailTo] = useState('')
+	const [emailError, setEmailError] = useState<string | null>(null)
+
+	const isValidEmail = (value: string) => {
+		const v = value.trim()
+		if (!v) return false
+		return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)
+	}
+
+	const handleEmailClick = async () => {
+		await onCopyTicket()
+		setEmailError(null)
+		setIsEmailDialogOpen(true)
+	}
+
+	const handleSendEmail = () => {
+		const to = emailTo.trim()
+		if (!isValidEmail(to)) {
+			setEmailError('Please enter a valid email address')
+			return
+		}
+
+		const subject = encodeURIComponent('AltSendme ticket')
+		const body = encodeURIComponent(`Here is my AltSendme ticket:\n\n${ticket}\n`)
+		const mailtoUrl = `mailto:${encodeURIComponent(to)}?subject=${subject}&body=${body}`
+
+		try {
+			if (typeof IS_TAURI !== 'undefined' && IS_TAURI) {
+				import('@tauri-apps/plugin-opener')
+					.then((opener: any) => {
+						const openFn = opener?.openUrl ?? opener?.open
+						if (typeof openFn === 'function') {
+							return openFn(mailtoUrl)
+						}
+						throw new Error('Tauri opener is not available')
+					})
+					.catch((error: unknown) => {
+						console.error('Failed to open mail client:', error)
+						toastManager.add({
+							id: crypto.randomUUID(),
+							title: 'Failed to open email client',
+							description: String(error),
+							type: 'error',
+						})
+					})
+			} else {
+				window.location.href = mailtoUrl
+			}
+		} finally {
+			setIsEmailDialogOpen(false)
+		}
+	}
 
 	return (
 		<div className="space-y-3">
@@ -258,32 +321,90 @@ export function TicketDisplay({
 			<InputGroup>
 				<InputGroupInput type="text" value={ticket} readOnly />
 				<InputGroupAddon align="inline-end">
-					<Button
-						type="button"
-						size="icon-xs"
-						onClick={onCopyTicket}
-						style={{
-							backgroundColor: copySuccess
-								? 'var(--app-primary)'
-								: 'rgba(255, 255, 255, 0.1)',
-							border: '1px solid rgba(255, 255, 255, 0.2)',
-							color: copySuccess
-								? 'var(--app-primary-fg)'
-								: 'var(--app-main-view-fg)',
-						}}
-						title={t('common:sender.copyToClipboard')}
-					>
-						{copySuccess ? (
-							<CheckCircle className="h-4 w-4" />
-						) : (
-							<Copy className="h-4 w-4" />
-						)}
-					</Button>
+					<div className="flex items-center gap-1">
+						<Button
+							type="button"
+							size="icon-xs"
+							onClick={handleEmailClick}
+							style={{
+								backgroundColor: 'rgba(255, 255, 255, 0.1)',
+								border: '1px solid rgba(255, 255, 255, 0.2)',
+								color: 'var(--app-main-view-fg)',
+							}}
+							title="Send by email"
+						>
+							<Mail className="h-4 w-4" />
+						</Button>
+						<Button
+							type="button"
+							size="icon-xs"
+							onClick={onCopyTicket}
+							style={{
+								backgroundColor: copySuccess
+									? 'var(--app-primary)'
+									: 'rgba(255, 255, 255, 0.1)',
+								border: '1px solid rgba(255, 255, 255, 0.2)',
+								color: copySuccess
+									? 'var(--app-primary-fg)'
+									: 'var(--app-main-view-fg)',
+							}}
+							title={t('common:sender.copyToClipboard')}
+						>
+							{copySuccess ? (
+								<CheckCircle className="h-4 w-4" />
+							) : (
+								<Copy className="h-4 w-4" />
+							)}
+						</Button>
+					</div>
 				</InputGroupAddon>
 			</InputGroup>
 			<p className="text-xs text-muted-foreground">
 				{t('common:sender.sendThisTicket')}
 			</p>
+
+			<AlertDialog open={isEmailDialogOpen} onOpenChange={setIsEmailDialogOpen}>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>Send ticket by email</AlertDialogTitle>
+						<AlertDialogDescription>
+							Enter the email address you want to send the ticket to.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+
+					<div className="px-6 pb-2">
+						<Label htmlFor="email-to" className="text-sm">
+							Email
+						</Label>
+						<div className="mt-2">
+							<Input
+								id="email-to"
+								type="email"
+								value={emailTo}
+								onChange={(e) => {
+									setEmailTo(e.target.value)
+									if (emailError) setEmailError(null)
+								}}
+								placeholder="name@example.com"
+								autoFocus
+							/>
+						</div>
+						{emailError && (
+							<p className="mt-2 text-xs text-destructive">{emailError}</p>
+						)}
+					</div>
+
+					<AlertDialogFooter>
+						<AlertDialogClose
+							render={<Button variant="secondary" size="sm">Cancel</Button>}
+							onClick={() => setIsEmailDialogOpen(false)}
+						/>
+						<Button size="sm" onClick={handleSendEmail}>
+							Send
+						</Button>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</div>
 	)
 }
